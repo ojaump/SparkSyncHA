@@ -109,11 +109,27 @@ class SparkSyncCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         pid = self.pid
         generator = data.get("generator") or {}
         engine = data.get("engine") or {}
-        running = (engine.get("engine_speed_rpm") or 0) > 0
+
+        # Never hinge this on one optional field: anything the controller does not
+        # report comes back null, and a null engine speed held the loop forever.
+        speed = engine.get("engine_speed_rpm")
+        power = generator.get("total_power_w")
+        if speed is None and power is None:
+            running = True  # controller reports neither; the operator armed it, so run
+        else:
+            running = (speed or 0) > 0 or (power or 0) > 0
 
         # Never steer on a stale snapshot or a stopped engine — freeze instead, and
         # re-seed from the real load level when the generator comes back.
-        if not pid.enabled or not running or not is_fresh(data.get("_meta") or {}, time.time()):
+        if not pid.enabled:
+            pid.status = "off"
+        elif not running:
+            pid.status = "engine stopped"
+        elif not is_fresh(data.get("_meta") or {}, time.time()):
+            pid.status = "stale data"
+        else:
+            pid.status = "regulating"
+        if pid.status != "regulating":
             pid.stop()
             return
         if not pid.running:
@@ -122,6 +138,7 @@ class SparkSyncCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         measured = self.measured_export_kw(data)
         if measured is None:
             # No usable reading (meter unknown, wrong unit, or stale) — hold.
+            pid.status = "no export reading"
             _LOGGER.debug("%s: no export reading, holding load-level-max", self.name)
             return
         command = pid.step(measured, time.time())
@@ -132,6 +149,7 @@ class SparkSyncCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except SparkSyncError as err:
             # A rejected write must not fail the poll; the next tick retries.
             pid.last_written = None
+            pid.status = f"write failed: {err}"
             _LOGGER.warning("Export regulation write failed for %s: %s", self.name, err)
         else:
             _LOGGER.debug(

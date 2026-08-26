@@ -45,10 +45,11 @@ class SparkSyncExportSwitch(RestoreEntity, SwitchEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        # `at_max_percent` is the one to watch: true means the ceiling, not the
-        # PID, is what is keeping export below target.
+        # `status` says why the loop is or is not writing; `at_max_percent` true
+        # means the ceiling, not the tuning, is holding export below target.
         pid = self.coordinator.pid
         return {
+            "status": pid.status,
             "export_kw": self.coordinator.measured_export_kw(),
             "target_kw": pid.target_kw,
             "load_level_max_percent": pid.last_written,

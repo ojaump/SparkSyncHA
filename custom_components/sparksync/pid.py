@@ -42,6 +42,7 @@ class ExportPID:
     last_step: float = 0.0
     last_written: int | None = None
     last_write: float = 0.0
+    status: str = "off"  # why the loop is or is not steering, surfaced on the switch
 
     @property
     def running(self) -> bool:
