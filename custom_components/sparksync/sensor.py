@@ -243,6 +243,11 @@ class SparkSyncSensor(CoordinatorEntity[SparkSyncCoordinator], SensorEntity):
         )
 
     @property
+    def available(self) -> bool:
+        # Gateway offline => the API keeps serving the last snapshot forever.
+        return super().available and self.coordinator.data_is_fresh
+
+    @property
     def native_value(self):
         data = self.coordinator.data or {}
         section = data.get(self.entity_description.section) or {}

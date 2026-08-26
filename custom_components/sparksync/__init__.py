@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -14,6 +15,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import SparkSyncApi, SparkSyncAuthError, SparkSyncError
+from .const import is_fresh
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,6 +39,11 @@ class SparkSyncCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.api = api
         self.device = device
+
+    @property
+    def data_is_fresh(self) -> bool:
+        """False when /info is replaying the last value from before a dropout."""
+        return is_fresh((self.data or {}).get("_meta") or {}, time.time())
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
