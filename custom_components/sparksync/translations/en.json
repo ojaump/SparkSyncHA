@@ -23,5 +23,13 @@
       "already_configured": "This account is already configured",
       "reauth_successful": "Re-authentication was successful"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Export regulation",
+        "description": "Pick the power sensor the export PID regulates on for each generator. It must read grid export, positive when exporting, in W, kW or MW. Leave empty to use the gateway's own mains reading."
+      }
+    }
   }
 }

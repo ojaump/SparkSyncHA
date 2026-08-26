@@ -23,12 +23,10 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import SparkSyncConfigEntry, SparkSyncCoordinator
-from .const import DOMAIN
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -234,13 +232,8 @@ class SparkSyncSensor(CoordinatorEntity[SparkSyncCoordinator], SensorEntity):
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
-        mac = coordinator.device["mac_address"]
-        self._attr_unique_id = f"{mac}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, mac)},
-            name=coordinator.device["name"],
-            manufacturer="SparkSync",
-        )
+        self._attr_unique_id = f"{coordinator.device['mac_address']}_{description.key}"
+        self._attr_device_info = coordinator.device_info
 
     @property
     def available(self) -> bool:
