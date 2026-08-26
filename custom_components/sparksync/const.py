@@ -40,7 +40,9 @@ DEFAULT_KP = 0.02
 DEFAULT_KI = 0.005
 DEFAULT_KD = 0.0  # ponytail: D on a noisy power reading usually hurts; left off.
 
-# POST /load-level-max is rate-limited to 10/min. One write per poll = 4/min.
+# POST /load-level-max is rate-limited to 10/min, so the write cadence is
+# decoupled from the 5 s poll: one write per 3 polls = 4/min, well under it.
+# Do not drop below 6 s, and less if several generators share the limit.
 MIN_WRITE_INTERVAL_S = 15
 DEADBAND_PERCENT = 1.0  # the API takes whole percent
 # Re-send the unchanged command this often, so a ceiling changed from the

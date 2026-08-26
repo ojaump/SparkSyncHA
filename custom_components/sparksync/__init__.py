@@ -23,7 +23,8 @@ from .pid import ExportPID
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
-SCAN_INTERVAL = timedelta(seconds=15)
+# GET /info allows 250/min; 5 s is 12 polls/min per generator.
+SCAN_INTERVAL = timedelta(seconds=5)
 
 type SparkSyncConfigEntry = ConfigEntry[list["SparkSyncCoordinator"]]
 
