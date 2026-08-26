@@ -50,9 +50,7 @@ class SparkSyncApi:
             raise SparkSyncError(f"Cannot connect: {err}") from err
         self._access_token = data["access_token"]
 
-    async def _request(
-        self, method: str, path: str, *, json: Any = None, retry: bool = True
-    ) -> Any:
+    async def _request(self, method: str, path: str, *, retry: bool = True) -> Any:
         # ponytail: re-login on 401 instead of refresh-token rotation — creds are
         # stored anyway and rotation adds already-used/race failure modes.
         if self._access_token is None:
@@ -62,11 +60,10 @@ class SparkSyncApi:
                 method,
                 f"{self._base}{path}",
                 headers={"Authorization": f"Bearer {self._access_token}"},
-                json=json,
             ) as resp:
                 if resp.status == 401 and retry:
                     self._access_token = None
-                    return await self._request(method, path, json=json, retry=False)
+                    return await self._request(method, path, retry=False)
                 if resp.status >= 400:
                     body = await resp.json(content_type=None)
                     message = (body or {}).get("message", f"HTTP {resp.status}")
@@ -80,13 +77,3 @@ class SparkSyncApi:
 
     async def async_get_info(self, device_id: int) -> dict[str, Any]:
         return await self._request("GET", f"/info?id={device_id}")
-
-    async def async_get_load_level_max(self, device_id: int) -> Any:
-        return await self._request("GET", f"/load-level-max?id={device_id}")
-
-    async def async_set_load_level_max(self, device_id: int, value: int) -> None:
-        # ponytail: the returned request_id is dropped — the next /info poll shows
-        # whether it landed, and polling /load-level-max/ack buys nothing here.
-        await self._request(
-            "POST", "/load-level-max", json={"id": device_id, "value": value}
-        )

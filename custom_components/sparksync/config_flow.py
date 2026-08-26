@@ -6,22 +6,12 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import (
-    ConfigEntry,
-    ConfigFlow,
-    ConfigFlowResult,
-    OptionsFlow,
-)
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_URL, CONF_USERNAME
-from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import (
-    EntitySelector,
-    EntitySelectorConfig,
-)
 
 from .api import SparkSyncApi, SparkSyncAuthError, SparkSyncError
-from .const import CONF_EXPORT_SENSORS, DOMAIN
+from .const import DOMAIN
 
 DATA_SCHEMA = vol.Schema(
     {
@@ -36,11 +26,6 @@ class SparkSyncConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the config flow."""
 
     VERSION = 1
-
-    @staticmethod
-    @callback
-    def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:
-        return SparkSyncOptionsFlow()
 
     async def _validate(self, url: str, username: str, password: str) -> str | None:
         """Try to log in; return an error key or None."""
@@ -104,40 +89,3 @@ class SparkSyncConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
             errors=errors,
         )
-
-
-class SparkSyncOptionsFlow(OptionsFlow):
-    """Pick the power sensor the export PID regulates on, per generator."""
-
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        # Labels carry the id so two generators named alike stay distinguishable;
-        # the option itself is stored by id, so renaming a device keeps it.
-        coordinators = getattr(self.config_entry, "runtime_data", []) or []
-        labels = {f"{c.device['name']} ({c.device['id']})": str(c.device["id"]) for c in coordinators}
-        current = self.config_entry.options.get(CONF_EXPORT_SENSORS, {})
-
-        if user_input is not None:
-            return self.async_create_entry(
-                data={
-                    CONF_EXPORT_SENSORS: {
-                        device_id: user_input[label]
-                        for label, device_id in labels.items()
-                        if user_input.get(label)
-                    }
-                }
-            )
-
-        schema = vol.Schema(
-            {
-                vol.Optional(
-                    label,
-                    description={"suggested_value": current.get(device_id)},
-                ): EntitySelector(
-                    EntitySelectorConfig(domain="sensor", device_class="power")
-                )
-                for label, device_id in labels.items()
-            }
-        )
-        return self.async_show_form(step_id="init", data_schema=schema)
