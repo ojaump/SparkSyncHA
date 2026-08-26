@@ -97,6 +97,15 @@ def test_holds_at_ceiling_without_winding_up():
     assert not p.at_max
 
 
+def test_no_dither_on_whole_percent_api():
+    # The API takes 52 %, not 52.5 %. Drift inside one percent must not flip the
+    # command back and forth; a full step must still move it.
+    p = armed(kp=0.1, ki=0.0)
+    assert p.step(80.0, T) == 52          # output 52.0
+    assert p.step(75.0, T + 20) is None   # output 52.5, inside the band
+    assert p.step(70.0, T + 40) == 53     # output 53.0, a full step
+
+
 def test_reasserts_command_periodically():
     p = armed(kp=0.1, ki=0.0)
     assert p.step(80.0, T) == 52

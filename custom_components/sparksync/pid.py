@@ -95,13 +95,18 @@ class ExportPID:
 
         if now - self.last_write < MIN_WRITE_INTERVAL_S:
             return None  # the API allows 10 writes/min; stay well under it
+        # The API takes whole percent only. Hold a full 1 % band around the last
+        # command — rounding alone is a +/-0.5 % band, which lets a hair of drift
+        # dither the generator between 52 % and 53 % forever.
         command = round(output)
         unchanged = (
             self.last_written is not None
-            and abs(command - self.last_written) < DEADBAND_PERCENT
+            and abs(output - self.last_written) < DEADBAND_PERCENT
         )
-        if unchanged and now - self.last_write < RESYNC_INTERVAL_S:
-            return None
+        if unchanged:
+            if now - self.last_write < RESYNC_INTERVAL_S:
+                return None
+            command = self.last_written  # re-assert the same value, do not re-round
         self.last_write = now
         self.last_written = command
         return command
