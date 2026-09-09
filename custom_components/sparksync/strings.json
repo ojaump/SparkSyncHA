@@ -2,10 +2,36 @@
   "config": {
     "step": {
       "user": {
+        "title": "SparkSync",
+        "description": "Where should the data come from?",
+        "menu_options": {
+          "gateway": "Gateway API",
+          "mqtt": "MQTT meters"
+        }
+      },
+      "gateway": {
+        "description": "Poll the SparkSync gateway API for generator telemetry.",
         "data": {
           "url": "API URL",
           "username": "Username",
           "password": "Password"
+        }
+      },
+      "mqtt": {
+        "description": "Subscribe to the SparkSync meter nodes on your broker. Nodes are discovered from their topics.",
+        "data": {
+          "host": "Broker host",
+          "port": "Port",
+          "websocket": "Connect over WebSocket",
+          "ws_path": "WebSocket path",
+          "tls": "Use TLS",
+          "username": "Username",
+          "password": "Password",
+          "base_topic": "Base topic"
+        },
+        "data_description": {
+          "websocket": "Turn off to connect straight to a broker's IP or hostname over TCP (e.g. the Mosquitto add-on on port 1883).",
+          "base_topic": "The node MAC is appended: SparkSync/Meter/<mac>"
         }
       },
       "reauth_confirm": {
@@ -17,7 +43,7 @@
     },
     "error": {
       "invalid_auth": "Invalid credentials",
-      "cannot_connect": "Could not connect to the SparkSync API"
+      "cannot_connect": "Could not connect"
     },
     "abort": {
       "already_configured": "This account is already configured",

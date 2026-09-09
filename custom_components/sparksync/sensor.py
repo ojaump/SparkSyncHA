@@ -13,20 +13,25 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     REVOLUTIONS_PER_MINUTE,
+    UnitOfApparentPower,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfFrequency,
     UnitOfPower,
     UnitOfPressure,
+    UnitOfReactivePower,
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import SparkSyncConfigEntry, SparkSyncCoordinator
+from .const import CONF_MODE, MODE_MQTT
+from .meter import SparkSyncMeterCoordinator, SparkSyncMeterHub
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -207,16 +212,116 @@ SENSORS: tuple[SparkSyncSensorDescription, ...] = (
 )
 
 
+PHASES = (("a", "L1"), ("b", "L2"), ("c", "L3"))
+LINES = (("ab", "L1-L2"), ("bc", "L2-L3"), ("ca", "L3-L1"))
+
+
+def _meter(key: str, name: str, unit=None, device_class=None) -> SensorEntityDescription:
+    return SensorEntityDescription(
+        key=key,
+        name=name,
+        native_unit_of_measurement=unit,
+        device_class=device_class,
+        state_class=SensorStateClass.MEASUREMENT,
+    )
+
+
+# The flat MQTT payload, minus `id` and the meter's own broken totals (MQTT.md).
+# Active/reactive power and power factor go negative when the site exports.
+METER_SENSORS: tuple[SensorEntityDescription, ...] = (
+    *(
+        _meter(f"u{p}", f"Voltage {n}", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE)
+        for p, n in PHASES
+    ),
+    *(
+        _meter(f"u{p}", f"Voltage {n}", UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE)
+        for p, n in LINES
+    ),
+    *(
+        _meter(f"i{p}", f"Current {n}", UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT)
+        for p, n in PHASES
+    ),
+    *(
+        _meter(f"p{p}", f"Active power {n}", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER)
+        for p, n in PHASES
+    ),
+    _meter("p", "Active power", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
+    *(
+        _meter(
+            f"q{p}",
+            f"Reactive power {n}",
+            UnitOfReactivePower.KILO_VOLT_AMPERE_REACTIVE,
+            SensorDeviceClass.REACTIVE_POWER,
+        )
+        for p, n in PHASES
+    ),
+    _meter(
+        "q",
+        "Reactive power",
+        UnitOfReactivePower.KILO_VOLT_AMPERE_REACTIVE,
+        SensorDeviceClass.REACTIVE_POWER,
+    ),
+    *(
+        _meter(
+            f"s{p}",
+            f"Apparent power {n}",
+            UnitOfApparentPower.KILO_VOLT_AMPERE,
+            SensorDeviceClass.APPARENT_POWER,
+        )
+        for p, n in PHASES
+    ),
+    _meter(
+        "s", "Apparent power", UnitOfApparentPower.KILO_VOLT_AMPERE, SensorDeviceClass.APPARENT_POWER
+    ),
+    *(
+        _meter(f"pf{p}", f"Power factor {n}", device_class=SensorDeviceClass.POWER_FACTOR)
+        for p, n in PHASES
+    ),
+    _meter("pf", "Power factor", device_class=SensorDeviceClass.POWER_FACTOR),
+    _meter("freq", "Frequency", UnitOfFrequency.HERTZ, SensorDeviceClass.FREQUENCY),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: SparkSyncConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    if entry.data.get(CONF_MODE) == MODE_MQTT:
+        _setup_meters(hass, entry, async_add_entities)
+        return
     async_add_entities(
         SparkSyncSensor(coordinator, description)
         for coordinator in entry.runtime_data
         for description in SENSORS
     )
+
+
+@callback
+def _setup_meters(
+    hass: HomeAssistant,
+    entry: SparkSyncConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Nodes appear as they publish - the retained status topic reveals them first."""
+    hub: SparkSyncMeterHub = entry.runtime_data
+    seen: set[str] = set()
+
+    @callback
+    def _discover() -> None:
+        for mac, coordinator in hub.coordinators.items():
+            if mac in seen:
+                continue
+            seen.add(mac)
+            async_add_entities(
+                SparkSyncMeterSensor(coordinator, description)
+                for description in METER_SENSORS
+            )
+
+    entry.async_on_unload(
+        async_dispatcher_connect(hass, hub.new_node_signal, _discover)
+    )
+    _discover()
 
 
 class SparkSyncSensor(CoordinatorEntity[SparkSyncCoordinator], SensorEntity):
@@ -245,3 +350,28 @@ class SparkSyncSensor(CoordinatorEntity[SparkSyncCoordinator], SensorEntity):
         data = self.coordinator.data or {}
         section = data.get(self.entity_description.section) or {}
         return section.get(self.entity_description.field)
+
+
+class SparkSyncMeterSensor(CoordinatorEntity[SparkSyncMeterCoordinator], SensorEntity):
+    """One key of the flat meter payload."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: SparkSyncMeterCoordinator,
+        description: SensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{coordinator.mac}_{description.key}"
+        self._attr_device_info = coordinator.device_info
+
+    @property
+    def available(self) -> bool:
+        # A node only publishes when its Modbus read worked; silence means stale.
+        return self.coordinator.data_is_fresh
+
+    @property
+    def native_value(self):
+        return (self.coordinator.data or {}).get(self.entity_description.key)

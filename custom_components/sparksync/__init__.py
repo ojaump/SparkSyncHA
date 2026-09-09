@@ -16,7 +16,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import SparkSyncApi, SparkSyncAuthError, SparkSyncError
-from .const import DOMAIN, is_fresh
+from .const import CONF_MODE, DOMAIN, MODE_MQTT, is_fresh
+from .meter import SparkSyncMeterHub
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +25,9 @@ PLATFORMS = [Platform.SENSOR]
 # GET /info allows 250/min; 5 s is 12 polls/min per generator.
 SCAN_INTERVAL = timedelta(seconds=5)
 
-type SparkSyncConfigEntry = ConfigEntry[list["SparkSyncCoordinator"]]
+type SparkSyncConfigEntry = ConfigEntry[
+    list["SparkSyncCoordinator"] | SparkSyncMeterHub
+]
 
 
 class SparkSyncCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -70,6 +73,14 @@ class SparkSyncCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SparkSyncConfigEntry) -> bool:
+    if entry.data.get(CONF_MODE) == MODE_MQTT:
+        hub = SparkSyncMeterHub(hass, entry)
+        await hub.async_start()
+        entry.async_on_unload(hub.async_stop)
+        entry.runtime_data = hub
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        return True
+
     api = SparkSyncApi(
         async_get_clientsession(hass),
         entry.data[CONF_URL],
