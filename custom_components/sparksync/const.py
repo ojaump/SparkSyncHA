@@ -2,13 +2,30 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 DOMAIN = "sparksync"
 
-# Gateway publishes to MQTT continuously; the backend's own `_meta.is_online`
-# uses a 120 s window. Match it. Lower this to fail over faster.
-STALE_AFTER_S = 120
+# The gateway publishes every telemetry section once per second, so 30 missed
+# frames is decisively dead. Retained MQTT frames outlive the device, which is
+# exactly what this guards against. Raise it if the link is flaky.
+STALE_AFTER_S = 30
+
+# Sections arrive on 8 topics at 1 Hz; coalesce one poll tick into one push
+# rather than writing entity states eight times a second.
+PUSH_INTERVAL_S = 1.0
+
+
+def mqtt_device_id(mac: str) -> str:
+    """The gateway's MQTT topic id for a device: `esp32-<12 hex, lowercase>`.
+
+    `/devices` may report the MAC colon-separated, bare, or already prefixed.
+    """
+    mac = mac.strip().lower()
+    if mac.startswith("esp32-"):
+        return mac
+    return "esp32-" + re.sub(r"[^0-9a-f]", "", mac)
 
 
 def is_fresh(meta: dict[str, Any], now: float) -> bool:
