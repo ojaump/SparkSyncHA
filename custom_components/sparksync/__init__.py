@@ -22,13 +22,16 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util.json import json_loads_object
 
 from .api import SparkSyncApi, SparkSyncAuthError, SparkSyncError
-<<<<<<< Updated upstream
-from .const import CONF_MODE, DOMAIN, MODE_MQTT, is_fresh
+from .const import (
+    CONF_MODE,
+    DOMAIN,
+    MODE_MQTT,
+    PUSH_INTERVAL_S,
+    is_fresh,
+    mqtt_device_id,
+)
 from .meter import SparkSyncMeterHub
-=======
-from .const import DOMAIN, PUSH_INTERVAL_S, is_fresh, mqtt_device_id
 from .normalize import normalize
->>>>>>> Stashed changes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,7 +136,7 @@ class SparkSyncCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: SparkSyncConfigEntry) -> bool:
-<<<<<<< Updated upstream
+    # Meter mode talks to its own broker; it does not use the HA MQTT client.
     if entry.data.get(CONF_MODE) == MODE_MQTT:
         hub = SparkSyncMeterHub(hass, entry)
         await hub.async_start()
@@ -141,10 +144,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: SparkSyncConfigEntry) ->
         entry.runtime_data = hub
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
         return True
-=======
+
+    # Gateway mode: entries created before the mode menu have no CONF_MODE.
     if not await mqtt.async_wait_for_mqtt_client(hass):
         raise ConfigEntryNotReady("MQTT integration is not available")
->>>>>>> Stashed changes
 
     api = SparkSyncApi(
         async_get_clientsession(hass),
