@@ -128,12 +128,6 @@ def test_every_sensor_field_is_reachable_from_both_controllers():
                 assert out.get(field) is not None, f"{label}: {section}.{field} unresolved"
 
 
-def test_mqtt_topic_id_from_any_mac_format():
-    for mac in ("00:70:07:7E:74:4C", "0070077e744c", "00-70-07-7e-74-4c",
-                "esp32-0070077e744c"):
-        assert const.mqtt_device_id(mac) == "esp32-0070077e744c"
-
-
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_"):

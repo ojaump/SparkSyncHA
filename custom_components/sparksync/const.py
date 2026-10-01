@@ -1,80 +1,71 @@
-"""Constants for the SparkSync integration."""
+"""Constants for the SparkSync integration.
+
+Pure helpers only -- no Home Assistant imports, so they stay testable on their own.
+"""
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 DOMAIN = "sparksync"
 
-# The gateway publishes every telemetry section once per second, so 30 missed
-# frames is decisively dead. Retained MQTT frames outlive the device, which is
-# exactly what this guards against. Raise it if the link is flaky.
-STALE_AFTER_S = 30
-
-# Sections arrive on 8 topics at 1 Hz; coalesce one poll tick into one push
-# rather than writing entity states eight times a second.
-PUSH_INTERVAL_S = 1.0
-
-
-def mqtt_device_id(mac: str) -> str:
-    """The gateway's MQTT topic id for a device: `esp32-<12 hex, lowercase>`.
-
-    `/devices` may report the MAC colon-separated, bare, or already prefixed.
-    """
-    mac = mac.strip().lower()
-    if mac.startswith("esp32-"):
-        return mac
-    return "esp32-" + re.sub(r"[^0-9a-f]", "", mac)
-
-
-def is_fresh(meta: dict[str, Any], now: float) -> bool:
-    """True if the /info snapshot is live, not the last value before a dropout.
-
-    `meta` is the top-level `_meta` of a /info response, `now` epoch seconds.
-    """
-    # ponytail: no HA imports here so this stays testable without homeassistant.
-    if not meta.get("controller_online", True):
-        return False
-    last_seen = meta.get("last_seen")
-    if last_seen is None:
-        return bool(meta.get("is_online", True))
-    return now - last_seen < STALE_AFTER_S
-
-
-# --- MQTT meter mode -------------------------------------------------------
-
 CONF_MODE = "mode"
-MODE_API = "api"
-MODE_MQTT = "mqtt"
+MODE_GATEWAY = "gateway"
+MODE_METER = "meter"
 
 CONF_WEBSOCKET = "websocket"
 CONF_WS_PATH = "ws_path"
 CONF_TLS = "tls"
 CONF_BASE_TOPIC = "base_topic"
 
-DEFAULT_BASE_TOPIC = "SparkSync/Meter"
 DEFAULT_WS_PATH = "/mqtt"
+DEFAULT_GATEWAY_TOPIC = "devices"
+DEFAULT_METER_TOPIC = "SparkSync/Meter"
 
-# A node publishes every 5 s and only when the Modbus read succeeded: RS-485 can
-# die while Wi-Fi stays up, so silence is a fault. Three cadences.
+# The gateway publishes every telemetry section once per second, so 30 missed
+# frames is decisively dead. Retained frames outlive the gateway, which is
+# exactly what this guards against. Raise it if the link is flaky.
+GATEWAY_STALE_AFTER_S = 30
+
+# A meter node publishes every 5 s and only when the Modbus read succeeded:
+# RS-485 can die while Wi-Fi stays up, so silence is a fault. Three cadences.
 METER_STALE_AFTER_S = 15
 
+# Sections arrive on 8 topics at 1 Hz; coalesce one tick into one push rather
+# than writing entity states eight times a second.
+PUSH_INTERVAL_S = 1.0
 
-def parse_meter_topic(base: str, topic: str) -> tuple[str, bool] | None:
-    """Split `<base>/<mac>[/status]` into (mac, is_status), or None if foreign."""
+# A `ts` further than this from our clock is a different unit or a bad clock,
+# not a timestamp.
+TS_SANITY_S = 86400
+
+
+def device_id_from_topic(base: str, topic: str) -> str | None:
+    """The device segment of `<base>/<id>/...`, or None if the topic isn't ours.
+
+    Both shapes land here: `devices/<id>/<section>` and `<base>/<mac>[/status]`.
+    """
     if not topic.startswith(f"{base}/"):
         return None
     parts = topic[len(base) + 1 :].split("/")
-    if len(parts) == 1 and parts[0]:
-        return parts[0], False
-    if len(parts) == 2 and parts[1] == "status" and parts[0]:
-        return parts[0], True
-    return None
+    if len(parts) not in (1, 2) or not all(parts):
+        return None
+    return parts[0]
 
 
-def meter_is_fresh(online: bool, last_message: float | None, now: float) -> bool:
-    """True only if the node says it is up *and* data actually arrived recently."""
+def seen_at(ts: Any, now: float) -> float:
+    """When a frame was published: its own `ts` if sane, else arrival time.
+
+    A retained frame carries the publisher's clock, and that is the only way a
+    restart can tell a live gateway from a dead one replaying its last words.
+    """
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)):
+        return now
+    return float(ts) if abs(now - ts) < TS_SANITY_S else now
+
+
+def is_fresh(online: bool, last_message: float | None, now: float, stale_after: float) -> bool:
+    """True only if the device says it is up *and* data actually arrived recently."""
     if not online or last_message is None:
         return False
-    return now - last_message < METER_STALE_AFTER_S
+    return now - last_message < stale_after

@@ -29,20 +29,20 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from . import SparkSyncConfigEntry, SparkSyncCoordinator
-from .const import CONF_MODE, MODE_MQTT
-from .meter import SparkSyncMeterCoordinator, SparkSyncMeterHub
+from . import SparkSyncConfigEntry
+from .broker import PushCoordinator
+from .const import CONF_MODE, MODE_METER
 
 
 @dataclass(frozen=True, kw_only=True)
 class SparkSyncSensorDescription(SensorEntityDescription):
-    """Adds the /info section and field the value lives in."""
+    """Adds the telemetry section and field the value lives in."""
 
     section: str
     field: str
 
 
-# Canonical fields only — present on both DSE and EasyGen controllers.
+# Canonical fields only - present on both DSE and EasyGen controllers.
 SENSORS: tuple[SparkSyncSensorDescription, ...] = (
     # Power production
     SparkSyncSensorDescription(
@@ -287,63 +287,54 @@ async def async_setup_entry(
     entry: SparkSyncConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    if entry.data.get(CONF_MODE) == MODE_MQTT:
-        _setup_meters(hass, entry, async_add_entities)
-        return
-    async_add_entities(
-        SparkSyncSensor(coordinator, description)
-        for coordinator in entry.runtime_data
-        for description in SENSORS
-    )
-
-
-@callback
-def _setup_meters(
-    hass: HomeAssistant,
-    entry: SparkSyncConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Nodes appear as they publish - the retained status topic reveals them first."""
-    hub: SparkSyncMeterHub = entry.runtime_data
+    """Devices appear as they publish; retained topics reveal most of them at once."""
+    hub = entry.runtime_data
+    is_meter = entry.data[CONF_MODE] == MODE_METER
+    descriptions = METER_SENSORS if is_meter else SENSORS
+    entity_class = SparkSyncMeterSensor if is_meter else SparkSyncSensor
     seen: set[str] = set()
 
     @callback
     def _discover() -> None:
-        for mac, coordinator in hub.coordinators.items():
-            if mac in seen:
+        for device_id, coordinator in hub.coordinators.items():
+            if device_id in seen:
                 continue
-            seen.add(mac)
+            seen.add(device_id)
             async_add_entities(
-                SparkSyncMeterSensor(coordinator, description)
-                for description in METER_SENSORS
+                entity_class(coordinator, description) for description in descriptions
             )
 
     entry.async_on_unload(
-        async_dispatcher_connect(hass, hub.new_node_signal, _discover)
+        async_dispatcher_connect(hass, hub.new_device_signal, _discover)
     )
     _discover()
 
 
-class SparkSyncSensor(CoordinatorEntity[SparkSyncCoordinator], SensorEntity):
-    """One canonical /info field."""
+class SparkSyncBaseSensor(CoordinatorEntity[PushCoordinator], SensorEntity):
+    """Shared plumbing: a device only publishes when it has a real reading, so
+    silence means stale and the entity goes unavailable rather than holding."""
 
     _attr_has_entity_name = True
-    entity_description: SparkSyncSensorDescription
 
     def __init__(
         self,
-        coordinator: SparkSyncCoordinator,
-        description: SparkSyncSensorDescription,
+        coordinator: PushCoordinator,
+        description: SensorEntityDescription,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = f"{coordinator.device['mac_address']}_{description.key}"
+        self._attr_unique_id = f"{coordinator.device_id}_{description.key}"
         self._attr_device_info = coordinator.device_info
 
     @property
     def available(self) -> bool:
-        # Gateway offline => the API keeps serving the last snapshot forever.
-        return super().available and self.coordinator.data_is_fresh
+        return self.coordinator.data_is_fresh
+
+
+class SparkSyncSensor(SparkSyncBaseSensor):
+    """One canonical field of one gateway telemetry section."""
+
+    entity_description: SparkSyncSensorDescription
 
     @property
     def native_value(self):
@@ -352,25 +343,8 @@ class SparkSyncSensor(CoordinatorEntity[SparkSyncCoordinator], SensorEntity):
         return section.get(self.entity_description.field)
 
 
-class SparkSyncMeterSensor(CoordinatorEntity[SparkSyncMeterCoordinator], SensorEntity):
+class SparkSyncMeterSensor(SparkSyncBaseSensor):
     """One key of the flat meter payload."""
-
-    _attr_has_entity_name = True
-
-    def __init__(
-        self,
-        coordinator: SparkSyncMeterCoordinator,
-        description: SensorEntityDescription,
-    ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{coordinator.mac}_{description.key}"
-        self._attr_device_info = coordinator.device_info
-
-    @property
-    def available(self) -> bool:
-        # A node only publishes when its Modbus read worked; silence means stale.
-        return self.coordinator.data_is_fresh
 
     @property
     def native_value(self):
